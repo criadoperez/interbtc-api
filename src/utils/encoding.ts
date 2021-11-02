@@ -5,7 +5,7 @@ import type { Struct } from "@polkadot/types";
 import { Network } from "bitcoinjs-lib";
 import { StorageKey } from "@polkadot/types/primitive/StorageKey";
 import { Codec } from "@polkadot/types/types";
-import { BitcoinUnit } from "@interlay/monetary-js";
+import { BitcoinUnit, Currency } from "@interlay/monetary-js";
 import { Moment } from "@polkadot/types/interfaces";
 import { Option } from "@polkadot/types/codec";
 
@@ -22,8 +22,21 @@ import {
     ReplaceRequest,
     IssueRequest,
     RedeemRequest,
+    VaultCurrencyPair,
+    VaultId,
+    CurrencyId,
 } from "../interfaces";
-import { newMonetaryAmount, VaultsAPI, WrappedCurrency } from "..";
+import {
+    CollateralCurrency,
+    CollateralUnit,
+    CurrencyIdLiteral,
+    currencyIdToLiteral,
+    currencyIdToMonetaryCurrency,
+    newMonetaryAmount,
+    tickerToCurrencyIdLiteral,
+    VaultsAPI,
+    WrappedCurrency,
+} from "..";
 
 /**
  * Converts endianness of a Uint8Array
@@ -149,6 +162,39 @@ export function newAccountId(api: ApiPromise, accountId: string): AccountId {
     return api.createType("AccountId", accountId);
 }
 
+export function newVaultId(
+    api: ApiPromise,
+    accountId: string,
+    collateralCurrency: CollateralCurrency,
+    wrappedCurrency: WrappedCurrency
+): VaultId {
+    const parsedAccountId = newAccountId(api, accountId);
+    const vaultCurrencyPair = newVaultCurrencyPair(api, collateralCurrency, wrappedCurrency);
+    return api.createType("VaultId", { account_id: parsedAccountId, currencies: vaultCurrencyPair });
+}
+
+export function newVaultCurrencyPair(
+    api: ApiPromise,
+    collateralCurrency: CollateralCurrency,
+    wrappedCurrency: WrappedCurrency
+): VaultCurrencyPair {
+    const collateralCurrencyIdLiteral = tickerToCurrencyIdLiteral(collateralCurrency.ticker);
+    const wrappedCurrencyIdLiteral = tickerToCurrencyIdLiteral(wrappedCurrency.ticker);
+    const collateralCurrencyId = newCurrencyId(api, collateralCurrencyIdLiteral);
+    const wrappedCurrencyId = newCurrencyId(api, wrappedCurrencyIdLiteral);
+    return api.createType(
+        "VaultCurrencyPair",
+        {
+            collateral: collateralCurrencyId,
+            wrapped: wrappedCurrencyId
+        }
+    );
+}
+
+export function newCurrencyId(api: ApiPromise, currency: CurrencyIdLiteral): CurrencyId {
+    return api.createType("CurrencyId", currency);
+}
+
 export function parseRefundRequest(
     req: RefundRequest,
     network: Network,
@@ -156,7 +202,7 @@ export function parseRefundRequest(
 ): RefundRequestExt {
     return {
         vaultId: req.vault,
-        amountIssuing: newMonetaryAmount(req.amount_issuing.toString(), wrappedCurrency),
+        amountIssuing: newMonetaryAmount(req.amount_btc.toString(), wrappedCurrency),
         fee: newMonetaryAmount(req.fee.toString(), wrappedCurrency),
         amountBtc: newMonetaryAmount(req.amount_btc.toString(), wrappedCurrency),
         issuer: req.issuer,
@@ -172,7 +218,8 @@ export async function parseReplaceRequest(
     network: Network,
     wrappedCurrency: WrappedCurrency
 ): Promise<ReplaceRequestExt> {
-    const oldVault = await vaultsAPI.get(req.old_vault);
+    const currencyIdLiteral = currencyIdToLiteral(req.old_vault.currencies.collateral);
+    const oldVault = await vaultsAPI.get(req.old_vault.account_id, currencyIdLiteral);
     return {
         btcAddress: encodeBtcAddress(req.btc_address, network),
         newVault: req.new_vault,
@@ -198,12 +245,14 @@ export async function parseIssueRequest(
         : req.status.isCancelled
             ? IssueStatus.Cancelled
             : IssueStatus.PendingWithBtcTxNotFound;
-    const vault = await vaultsAPI.get(req.vault);
+    const currencyIdLiteral = currencyIdToLiteral(req.vault.currencies.collateral);
+    const vault = await vaultsAPI.get(req.vault.account_id, currencyIdLiteral);
     return {
         id: stripHexPrefix(id.toString()),
         creationBlock: req.opentime.toNumber(),
         vaultBTCAddress: encodeBtcAddress(req.btc_address, network),
         vaultParachainAddress: req.vault.toString(),
+        collateralCurrency: vault.collateralCurrency,
         userParachainAddress: req.requester.toString(),
         vaultWalletPubkey: req.btc_public_key.toString(),
         bridgeFee: newMonetaryAmount(req.fee.toString(), vaultsAPI.getWrappedCurrency()),
@@ -226,7 +275,9 @@ export async function parseRedeemRequest(
             : req.status.isReimbursed
                 ? RedeemStatus.Reimbursed
                 : RedeemStatus.PendingWithBtcTxNotFound;
-    const vault = await vaultsAPI.get(req.vault);
+
+    const currencyIdLiteral = currencyIdToLiteral(req.vault.currencies.collateral);
+    const vault = await vaultsAPI.get(req.vault.account_id, currencyIdLiteral);
     return {
         id: stripHexPrefix(id.toString()),
         userParachainAddress: req.redeemer.toString(),

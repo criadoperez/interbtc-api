@@ -2,7 +2,7 @@ import { ApiPromise } from "@polkadot/api";
 import { AddressOrPair } from "@polkadot/api/submittable/types";
 import { Signer } from "@polkadot/api/types";
 import { KeyringPair } from "@polkadot/keyring/types";
-import { InterBtc } from "@interlay/monetary-js";
+import { Currency, InterBtc } from "@interlay/monetary-js";
 
 import { ElectrsAPI, DefaultElectrsAPI } from "./external/electrs";
 import { DefaultNominationAPI, NominationAPI } from "./parachain/nomination";
@@ -20,7 +20,7 @@ import { DefaultReplaceAPI, ReplaceAPI } from "./parachain/replace";
 import { Network, networks } from "bitcoinjs-lib";
 import { BitcoinNetwork } from "./types/bitcoinTypes";
 import { DefaultRewardsAPI, RewardsAPI } from "./parachain/rewards";
-import { WrappedCurrency } from ".";
+import { CollateralCurrency, CollateralUnit, WrappedCurrency } from ".";
 
 export * from "./factory";
 export * from "./parachain/transaction";
@@ -77,25 +77,40 @@ export class DefaultInterBTCAPI implements InterBTCAPI {
 
     constructor(
         readonly api: ApiPromise,
+        nativeCurrency: CollateralCurrency,
         network: BitcoinNetwork = "mainnet",
         wrappedCurrency: WrappedCurrency = InterBtc,
         private _account?: AddressOrPair
     ) {
         const btcNetwork = getBitcoinNetwork(network);
         this.electrsAPI = new DefaultElectrsAPI(network);
-        this.vaults = new DefaultVaultsAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
-        this.faucet = new FaucetClient("");
+        this.vaults = new DefaultVaultsAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, nativeCurrency, _account);
+        this.faucet = new FaucetClient(api, "");
         this.oracle = new DefaultOracleAPI(api, wrappedCurrency);
         this.refund = new DefaultRefundAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
         this.btcRelay = new DefaultBTCRelayAPI(api, this.electrsAPI);
         this.tokens = new DefaultTokensAPI(api, _account);
         this.system = new DefaultSystemAPI(api);
-        this.replace = new DefaultReplaceAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
+        this.replace = new DefaultReplaceAPI(
+            api,
+            btcNetwork,
+            this.electrsAPI,
+            wrappedCurrency,
+            nativeCurrency,
+            _account
+        );
         this.fee = new DefaultFeeAPI(api, wrappedCurrency);
-        this.issue = new DefaultIssueAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
-        this.redeem = new DefaultRedeemAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
-        this.nomination = new DefaultNominationAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, _account);
-        this.pools = new DefaultRewardsAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency);
+        this.issue = new DefaultIssueAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, nativeCurrency, _account);
+        this.redeem = new DefaultRedeemAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, nativeCurrency, _account);
+        this.nomination = new DefaultNominationAPI(
+            api,
+            btcNetwork,
+            this.electrsAPI,
+            wrappedCurrency,
+            nativeCurrency,
+            _account
+        );
+        this.pools = new DefaultRewardsAPI(api, btcNetwork, this.electrsAPI, wrappedCurrency, nativeCurrency);
     }
 
     setAccount(account: AddressOrPair, signer?: Signer): void {

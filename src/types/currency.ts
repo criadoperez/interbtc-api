@@ -16,16 +16,25 @@ import {
     Kintsugi,
     Interlay,
 } from "@interlay/monetary-js";
+import { ApiPromise } from "@polkadot/api";
+import { newCurrencyId } from "..";
 import { CurrencyId } from "../interfaces";
 
 export enum CurrencyIdLiteral {
     DOT = "DOT",
-    KSM = "KSM",
     INTERBTC = "INTERBTC",
+    INTR = "INTR",
+    KSM = "KSM",
     KBTC = "KBTC",
     KINT = "KINT",
-    INTR = "INTR",
 }
+
+export type WrappedIdLiteral = CurrencyIdLiteral.INTERBTC | CurrencyIdLiteral.KBTC;
+export type CollateralIdLiteral =
+    | CurrencyIdLiteral.DOT
+    | CurrencyIdLiteral.KSM
+    | CurrencyIdLiteral.KINT
+    | CurrencyIdLiteral.INTR;
 
 export const CollateralAmount = [PolkadotAmount, KusamaAmount];
 export type CollateralAmount = typeof CollateralAmount[number];
@@ -84,4 +93,13 @@ export function currencyIdToMonetaryCurrency<U extends CurrencyUnit>(currencyId:
         return Interlay as unknown as Currency<U>;
     }
     throw new Error("No CurrencyId entry for provided ticker");
+}
+
+export function currencyIdToLiteral(currencyId: CurrencyId): CurrencyIdLiteral {
+    return tickerToCurrencyIdLiteral(currencyIdToMonetaryCurrency(currencyId).ticker);
+}
+
+export function tickerToMonetaryCurrency<U extends CurrencyUnit>(api: ApiPromise, ticker: string): Currency<U> {
+    const currencyIdLiteral = tickerToCurrencyIdLiteral(ticker);
+    return currencyIdToMonetaryCurrency(newCurrencyId(api, currencyIdLiteral));
 }

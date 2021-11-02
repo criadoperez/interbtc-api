@@ -1,6 +1,6 @@
 import { ApiPromise, Keyring } from "@polkadot/api";
 import { KeyringPair } from "@polkadot/keyring/types";
-import { Bitcoin, InterBtcAmount, BitcoinUnit, ExchangeRate, InterBtc, Polkadot, PolkadotAmount, PolkadotUnit } from "@interlay/monetary-js";
+import { Bitcoin, InterBtcAmount, BitcoinUnit, ExchangeRate, InterBtc, Polkadot, PolkadotAmount, PolkadotUnit, Kusama } from "@interlay/monetary-js";
 import { TypeRegistry } from "@polkadot/types";
 import * as bitcoinjs from "bitcoinjs-lib";
 import Big from "big.js";
@@ -8,7 +8,7 @@ import Big from "big.js";
 import { createPolkadotAPI } from "../../../../src/factory";
 import { assert } from "../../../chai";
 import { ORACLE_URI, VAULT_1_URI, VAULT_2_URI, BITCOIN_CORE_HOST, BITCOIN_CORE_NETWORK, BITCOIN_CORE_PASSWORD, BITCOIN_CORE_PORT, BITCOIN_CORE_USERNAME, BITCOIN_CORE_WALLET, PARACHAIN_ENDPOINT, VAULT_3_URI, VAULT_TO_LIQUIDATE_URI, VAULT_TO_BAN_URI, ESPLORA_BASE_PATH } from "../../../config";
-import { BitcoinCoreClient, DefaultVaultsAPI, DefaultElectrsAPI, DefaultOracleAPI, ElectrsAPI, newAccountId } from "../../../../src/";
+import { BitcoinCoreClient, DefaultVaultsAPI, DefaultElectrsAPI, DefaultOracleAPI, ElectrsAPI, newAccountId, CollateralCurrency, WrappedCurrency, VaultId, newVaultId, currencyIdToLiteral, WrappedIdLiteral, CollateralIdLiteral } from "../../../../src/";
 import { issueSingle } from "../../../../src/utils";
 import { DefaultRewardsAPI } from "../../../../src/parachain/rewards";
 
@@ -17,14 +17,20 @@ describe("vaultsAPI", () => {
     let vault_to_liquidate: KeyringPair;
     let vault_to_ban: KeyringPair;
     let vault_1: KeyringPair;
+    let vault_1_id: VaultId;
     let vault_2: KeyringPair;
+    let vault_2_id: VaultId;
     let vault_3: KeyringPair;
+    let vault_3_id: VaultId;
     let api: ApiPromise;
     let vaultsAPI: DefaultVaultsAPI;
     let oracleAPI: DefaultOracleAPI;
     let rewardsAPI: DefaultRewardsAPI;
     let electrsAPI: ElectrsAPI;
     let bitcoinCoreClient: BitcoinCoreClient;
+    
+    let nativeCurrency: CollateralCurrency;
+    let wrappedCurrency: WrappedCurrency;
 
     const registry = new TypeRegistry();
 
@@ -33,15 +39,18 @@ describe("vaultsAPI", () => {
         const keyring = new Keyring({ type: "sr25519" });
         oracleAccount = keyring.addFromUri(ORACLE_URI);
         vault_1 = keyring.addFromUri(VAULT_1_URI);
+        vault_1_id = newVaultId(api, vault_1.address, Polkadot, wrappedCurrency);
         vault_2 = keyring.addFromUri(VAULT_2_URI);
+        vault_2_id = newVaultId(api, vault_2.address, Kusama, wrappedCurrency);
         vault_3 = keyring.addFromUri(VAULT_3_URI);
+        vault_3_id = newVaultId(api, vault_3.address, Polkadot, wrappedCurrency);
         vault_to_ban = keyring.addFromUri(VAULT_TO_BAN_URI);
         vault_to_liquidate = keyring.addFromUri(VAULT_TO_LIQUIDATE_URI);
         oracleAPI = new DefaultOracleAPI(api, InterBtc, oracleAccount);
-        rewardsAPI = new DefaultRewardsAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc);
+        rewardsAPI = new DefaultRewardsAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency);
 
         electrsAPI = new DefaultElectrsAPI(ESPLORA_BASE_PATH);
-        vaultsAPI = new DefaultVaultsAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc);
+        vaultsAPI = new DefaultVaultsAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency);
         bitcoinCoreClient = new BitcoinCoreClient(
             BITCOIN_CORE_NETWORK,
             BITCOIN_CORE_HOST,
@@ -106,8 +115,11 @@ describe("vaultsAPI", () => {
     });
 
     it("should getPremiumRedeemVaults after a price crash", async () => {
-        const issuableAmount = await vaultsAPI.getIssuableAmount(newAccountId(api, vault_3.address));
-        await issueSingle(api, electrsAPI, bitcoinCoreClient, oracleAccount, issuableAmount, vault_3.address);
+        const issuableAmount = await vaultsAPI.getIssuableAmount(
+            newAccountId(api, vault_3.address),
+            currencyIdToLiteral(vault_3_id.currencies.collateral) as CollateralIdLiteral
+        );
+        await issueSingle(api, electrsAPI, bitcoinCoreClient, oracleAccount, issuableAmount, nativeCurrency, vault_3_id);
 
         const currentVaultCollateralization = await vaultsAPI.getVaultCollateralization(newAccountId(api, vault_3.address));
         if (currentVaultCollateralization === undefined) {
@@ -156,7 +168,7 @@ describe("vaultsAPI", () => {
 
     it("should select random vault for issue", async () => {
         const randomVault = await vaultsAPI.selectRandomVaultIssue(InterBtcAmount.zero);
-        assert.isTrue(vaultIsATestVault(randomVault.toHuman()));
+        assert.isTrue(vaultIsATestVault(randomVault.account_id.toHuman()));
     });
 
     it("should fail if no vault for issuing is found", async () => {
@@ -165,7 +177,7 @@ describe("vaultsAPI", () => {
 
     it("should select random vault for redeem", async () => {
         const randomVault = await vaultsAPI.selectRandomVaultRedeem(InterBtcAmount.zero);
-        assert.isTrue(vaultIsATestVault(randomVault.toHuman()));
+        assert.isTrue(vaultIsATestVault(randomVault.account_id.toHuman()));
     });
 
     it("should fail if no vault for redeeming is found", async () => {
@@ -174,23 +186,22 @@ describe("vaultsAPI", () => {
     });
 
     it("should fail to get vault collateralization for vault with zero collateral", async () => {
-        const vault1Id = api.createType("AccountId", vault_1.address);
+        const vault1Id = newAccountId(api, vault_1.address);
         assert.isRejected(vaultsAPI.getVaultCollateralization(vault1Id));
     });
 
-    it("should fail to get total collateralization when no tokens are issued", async () => {
-        assert.isRejected(vaultsAPI.getSystemCollateralization());
-    });
-
     it("should get vault theft flag", async () => {
-        const vaultToBanId = api.createType("AccountId", vault_to_ban.address);
+        const vaultToBanId = newAccountId(api, vault_to_ban.address);
         const flaggedForTheft = await vaultsAPI.isVaultFlaggedForTheft(vaultToBanId);
         assert.isTrue(flaggedForTheft);
     });
 
     it("should get the issuable InterBtc for a vault", async () => {
-        const vault1Id = api.createType("AccountId", vault_1.address);
-        const issuableInterBtc = await vaultsAPI.getIssuableAmount(vault1Id);
+        const vault1Id = newAccountId(api, vault_1.address);
+        const issuableInterBtc = await vaultsAPI.getIssuableAmount(
+            vault1Id,
+            currencyIdToLiteral(vault_1_id.currencies.collateral) as CollateralIdLiteral
+        );
         assert.isTrue(issuableInterBtc.gt(InterBtcAmount.zero));
     });
 
@@ -200,12 +211,16 @@ describe("vaultsAPI", () => {
     });
 
     it("should getFees", async () => {
-        const feesWrapped = await rewardsAPI.getFeesWrapped(vault_1.address);
+        const vault1Id = newAccountId(api, vault_1.address);
+        const feesWrapped = await rewardsAPI.getFeesWrapped(
+            vault1Id,
+            currencyIdToLiteral(vault_1_id.currencies.collateral) as CollateralIdLiteral
+        );
         assert.isTrue(feesWrapped.gte(InterBtcAmount.zero));
     });
 
     it("should getAPY", async () => {
-        const apy = await vaultsAPI.getAPY(registry.createType("AccountId", vault_1.address));
+        const apy = await vaultsAPI.getAPY(newAccountId(api, vault_1.address), currencyIdToLiteral(vault_1_id.currencies.collateral) as CollateralIdLiteral);
         const apyBig = new Big(apy);
         const apyBenchmark = new Big("0");
         assert.isTrue(apyBig.gte(apyBenchmark));

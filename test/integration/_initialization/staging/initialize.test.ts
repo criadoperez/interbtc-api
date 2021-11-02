@@ -22,6 +22,12 @@ import {
     DefaultVaultsAPI,
     newAccountId,
     CollateralUnit,
+    CurrencyIdLiteral,
+    newVaultId,
+    CollateralCurrency,
+    WrappedCurrency,
+    tickerToCurrencyIdLiteral,
+    tickerToMonetaryCurrency,
 } from "../../../../src";
 import { DefaultElectrsAPI } from "../../../../src/external/electrs";
 import { DefaultIssueAPI } from "../../../../src/parachain/issue";
@@ -51,11 +57,13 @@ import {
     VAULT_TO_BAN_URI,
     USER_1_URI,
     ESPLORA_BASE_PATH,
+    NATIVE_CURRENCY_TICKER,
+    WRAPPED_CURRENCY_TICKER
 } from "../../../config";
 import { DefaultTokensAPI } from "../../../../src/parachain/tokens";
 import { sleep, SLEEP_TIME_MS } from "../../../utils/helpers";
 
-describe("Initialize parachain state", () => {
+describe.only("Initialize parachain state", () => {
     let api: ApiPromise;
     let issueAPI: IssueAPI;
     let redeemAPI: RedeemAPI;
@@ -78,14 +86,17 @@ describe("Initialize parachain state", () => {
     let vault_to_ban: KeyringPair;
     let vault_to_liquidate: KeyringPair;
 
+    let nativeCurrency: CollateralCurrency;
+    let wrappedCurrency: WrappedCurrency;
+
     function accountIdFromKeyring(keyPair: KeyringPair): AccountId {
-        return api.createType("AccountId", keyPair.address);
+        return newAccountId(api, keyPair.address);
     }
 
-    async function waitForRegister(api: VaultsAPI, accountId: AccountId) {
+    async function waitForRegister(api: VaultsAPI, accountId: AccountId, collateralCurrency: CurrencyIdLiteral) {
         while (true) {
             try {
-                await api.get(accountId);
+                await api.get(accountId, collateralCurrency);
                 return;
             } catch (_) { }
             await sleep(SLEEP_TIME_MS);
@@ -103,6 +114,8 @@ describe("Initialize parachain state", () => {
         vault_3 = keyring.addFromUri(VAULT_3_URI);
         vault_to_ban = keyring.addFromUri(VAULT_TO_BAN_URI);
         vault_to_liquidate = keyring.addFromUri(VAULT_TO_LIQUIDATE_URI);
+        nativeCurrency = tickerToMonetaryCurrency(api, NATIVE_CURRENCY_TICKER) as CollateralCurrency;
+        wrappedCurrency = tickerToMonetaryCurrency(api, WRAPPED_CURRENCY_TICKER) as WrappedCurrency;
         
         electrsAPI = new DefaultElectrsAPI(ESPLORA_BASE_PATH);
         bitcoinCoreClient = new BitcoinCoreClient(
@@ -113,19 +126,26 @@ describe("Initialize parachain state", () => {
             BITCOIN_CORE_PORT,
             BITCOIN_CORE_WALLET
         );
-        issueAPI = new DefaultIssueAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc, userAccount);
-        redeemAPI = new DefaultRedeemAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc, userAccount);
-        oracleAPI = new DefaultOracleAPI(api, InterBtc, oracleAccount);
+        issueAPI = new DefaultIssueAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency, userAccount);
+        redeemAPI = new DefaultRedeemAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency, userAccount);
+        oracleAPI = new DefaultOracleAPI(api, wrappedCurrency, oracleAccount);
         tokensAPI = new DefaultTokensAPI(api, userAccount);
-        vaultsAPI = new DefaultVaultsAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc, userAccount);
-        nominationAPI = new DefaultNominationAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc, sudoAccount);
+        vaultsAPI = new DefaultVaultsAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency, userAccount);
+        nominationAPI = new DefaultNominationAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency, sudoAccount);
         btcRelayAPI = new DefaultBTCRelayAPI(api, electrsAPI);
 
+        const vaultCollateralPairs: [KeyringPair, CurrencyIdLiteral][] = [
+            [vault_1, CurrencyIdLiteral.DOT],
+            [vault_2, CurrencyIdLiteral.KSM],
+            [vault_3, CurrencyIdLiteral.DOT],
+            [vault_to_ban, CurrencyIdLiteral.DOT],
+            [vault_to_liquidate, CurrencyIdLiteral.DOT]
+        ];
         // wait for all vaults to register
         await Promise.all(
-            [vault_1, vault_2, vault_3, vault_to_ban, vault_to_liquidate]
-                .map(accountIdFromKeyring)
-                .map((accountId) => waitForRegister(vaultsAPI, accountId))
+            vaultCollateralPairs
+                .map(([keyring, collateral]): [AccountId, CurrencyIdLiteral] => [accountIdFromKeyring(keyring), collateral])
+                .map(([accountId, collateral]) => waitForRegister(vaultsAPI, accountId, collateral))
         );
     });
 
@@ -133,7 +153,7 @@ describe("Initialize parachain state", () => {
         api.disconnect();
     });
 
-    it("should set the stable confirmations and ready the BTC-Relay", async () => {
+    it.only("should set the stable confirmations and ready the BTC-Relay", async () => {
         const previousIssueApiAccount = issueAPI.getAccount();
         issueAPI.setAccount(sudoAccount);
         // Speed up the process by only requiring 0 parachain and 0 bitcoin confirmations
@@ -157,7 +177,7 @@ describe("Initialize parachain state", () => {
         }
     });
 
-    it("should set the exchange rate", async () => {
+    it.only("should set the exchange rate", async () => {
         async function setCollateralExchangeRate<C extends CollateralUnit>(value: Big, currency: Currency<C>) {
             const exchangeRate = new ExchangeRate<Bitcoin, BitcoinUnit, typeof currency, typeof currency.units>(Bitcoin, currency, value);
             // result will be medianized
@@ -182,13 +202,13 @@ describe("Initialize parachain state", () => {
         assert.isTrue(isNominationEnabled);
     });
 
-    it("should issue 0.1 InterBtc", async () => {
-        const interBtcToIssue = InterBtcAmount.from.BTC(0.1);
+    it("should issue 0.00007 InterBtc", async () => {
+        const interBtcToIssue = InterBtcAmount.from.BTC(0.00007);
         const feesToPay = await issueAPI.getFeesToPay(interBtcToIssue);
-        const userAccountId = api.createType("AccountId", userAccount.address);
+        const userAccountId = newAccountId(api, userAccount.address);
         const sudoInterBTCBefore = await tokensAPI.balance(InterBtc, userAccountId);
 
-        await initializeIssue(api, electrsAPI, bitcoinCoreClient, userAccount, interBtcToIssue, vault_1.address);
+        await initializeIssue(api, electrsAPI, bitcoinCoreClient, userAccount, interBtcToIssue, nativeCurrency, newVaultId(api, vault_1.address, Polkadot, wrappedCurrency));
         const sudoInterBTCAfter = await tokensAPI.balance(InterBtc, userAccountId);
         assert.equal(
             sudoInterBTCBefore.add(interBtcToIssue).sub(feesToPay).toString(),
@@ -197,12 +217,12 @@ describe("Initialize parachain state", () => {
         );
         const totalIssuance = await tokensAPI.total(InterBtc);
         assert.equal(totalIssuance.toString(), interBtcToIssue.toString());
-        const vaultIssuedAmount = await vaultsAPI.getIssuedAmount(newAccountId(api, vault_1.address));
+        const vaultIssuedAmount = await vaultsAPI.getIssuedAmount(newAccountId(api, vault_1.address), CurrencyIdLiteral.DOT);
         assert.equal(vaultIssuedAmount.toString(), interBtcToIssue.toString());
     });
 
-    it("should redeem 0.05 InterBtc", async () => {
-        const interBtcToRedeem = InterBtcAmount.from.BTC(0.05);
+    it("should redeem 0.00005 InterBtc", async () => {
+        const interBtcToRedeem = InterBtcAmount.from.BTC(0.00005);
         const redeemAddress = "bcrt1qed0qljupsmqhxul67r7358s60reqa2qtte0kay";
         await redeemAPI.request(interBtcToRedeem, redeemAddress);
 

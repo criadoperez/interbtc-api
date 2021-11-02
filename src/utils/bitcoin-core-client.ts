@@ -67,7 +67,7 @@ export class BitcoinCoreClient {
         if (!this.client) {
             throw new Error("Client needs to be initialized before usage");
         }
-        console.log(`Broadcasting tx: ${amount.toString(Bitcoin.base)} BTC`);
+        console.log(`Broadcasting tx: ${amount.toString(Bitcoin.base)} BTC to ${recipient}`);
         const raw = await this.client.command(
             "createrawtransaction",
             [],
@@ -77,6 +77,7 @@ export class BitcoinCoreClient {
         const signed = await this.client.command("signrawtransactionwithwallet", funded.hex);
         const response = await this.client.command("sendrawtransaction", signed.hex);
         const txid = response;
+        console.log(`txid: ${txid}`);
         return {
             txid: txid,
             rawTx: signed.hex,

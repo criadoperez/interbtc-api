@@ -72,7 +72,9 @@ export class DefaultRefundAPI extends DefaultTransactionAPI implements RefundAPI
     async list(): Promise<RefundRequestExt[]> {
         const head = await this.api.rpc.chain.getFinalizedHead();
         const refundRequests = await this.api.query.refund.refundRequests.entriesAt(head);
-        return refundRequests.map((v) => parseRefundRequest(v[1], this.btcNetwork, this.wrappedCurrency));
+        return refundRequests
+            .filter(([_, req]) => req.isSome.valueOf)
+            .map((v) => parseRefundRequest(v[1].unwrap(), this.btcNetwork, this.wrappedCurrency));
     }
 
     async mapForUser(account: AccountId): Promise<Map<H256, RefundRequestExt>> {

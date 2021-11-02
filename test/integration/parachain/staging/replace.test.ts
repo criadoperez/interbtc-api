@@ -1,7 +1,7 @@
 import { ApiPromise, Keyring } from "@polkadot/api";
 import * as bitcoinjs from "bitcoinjs-lib";
 import { KeyringPair } from "@polkadot/keyring/types";
-import { InterBtc, InterBtcAmount, Polkadot } from "@interlay/monetary-js";
+import { InterBtc, InterBtcAmount, Kusama, Polkadot } from "@interlay/monetary-js";
 
 import { ElectrsAPI, DefaultElectrsAPI } from "../../../../src/external/electrs";
 import { BitcoinCoreClient } from "../../../../src/utils/bitcoin-core-client";
@@ -17,11 +17,13 @@ import {
     BITCOIN_CORE_WALLET,
     PARACHAIN_ENDPOINT,
     VAULT_3_URI,
-    ESPLORA_BASE_PATH
+    ESPLORA_BASE_PATH,
+    NATIVE_CURRENCY_TICKER,
+    WRAPPED_CURRENCY_TICKER
 } from "../../../config";
 import { assert } from "../../../chai";
 import { issueSingle } from "../../../../src/utils/issueRedeem";
-import { DefaultReplaceAPI, ReplaceAPI } from "../../../../src";
+import { CollateralCurrency, currencyIdToMonetaryCurrency, DefaultReplaceAPI, newAccountId, newVaultId, ReplaceAPI, tickerToMonetaryCurrency, VaultId, WrappedCurrency } from "../../../../src";
 import { SLEEP_TIME_MS, sleep } from "../../../utils/helpers";
 
 describe("replace", () => {
@@ -32,7 +34,12 @@ describe("replace", () => {
     let keyring: Keyring;
     let userAccount: KeyringPair;
     let vault_3: KeyringPair;
+    let vault_3_id: VaultId;
     let vault_2: KeyringPair;
+    let vault_2_id: VaultId;
+
+    let nativeCurrency: CollateralCurrency;
+    let wrappedCurrency: WrappedCurrency;
 
     before(async function () {
         api = await createPolkadotAPI(PARACHAIN_ENDPOINT);
@@ -46,10 +53,14 @@ describe("replace", () => {
             BITCOIN_CORE_PORT,
             BITCOIN_CORE_WALLET
         );
-        replaceAPI = new DefaultReplaceAPI(api, bitcoinjs.networks.regtest, electrsAPI, InterBtc);
+        nativeCurrency = tickerToMonetaryCurrency(api, NATIVE_CURRENCY_TICKER) as CollateralCurrency;
+        wrappedCurrency = tickerToMonetaryCurrency(api, WRAPPED_CURRENCY_TICKER) as WrappedCurrency;
+        replaceAPI = new DefaultReplaceAPI(api, bitcoinjs.networks.regtest, electrsAPI, wrappedCurrency, nativeCurrency);
         userAccount = keyring.addFromUri(USER_1_URI);
         vault_3 = keyring.addFromUri(VAULT_3_URI);
+        vault_3_id = newVaultId(api, vault_3.address, Polkadot, wrappedCurrency);
         vault_2 = keyring.addFromUri(VAULT_2_URI);
+        vault_2_id = newVaultId(api, vault_2.address, Kusama, wrappedCurrency);
     });
 
     after(async () => {
@@ -68,13 +79,14 @@ describe("replace", () => {
                 bitcoinCoreClient,
                 userAccount,
                 issueAmount,
-                vault_3.address
+                nativeCurrency,
+                vault_3_id
             );
             replaceAPI.setAccount(vault_3);
-            replaceId = await replaceAPI.request(replaceAmount);
+            replaceId = await replaceAPI.request(replaceAmount, currencyIdToMonetaryCurrency(vault_3_id.currencies.collateral) as CollateralCurrency);
 
             replaceAPI.setAccount(vault_2);
-            replaceId = await replaceAPI.request(replaceAmount);
+            replaceId = await replaceAPI.request(replaceAmount, currencyIdToMonetaryCurrency(vault_2_id.currencies.collateral) as CollateralCurrency);
         }).timeout(200000);
 
         // This test assumes the request replace test was successful
@@ -115,10 +127,10 @@ describe("replace", () => {
     }).timeout(500);
 
     it("should list replace request by a vault", async () => {
-        const vault3Id = api.createType("AccountId", vault_3.address);
+        const vault3Id = newAccountId(api, vault_3.address);
         const replaceRequests = await replaceAPI.mapReplaceRequests(vault3Id);
         replaceRequests.forEach((request) => {
-            assert.deepEqual(request.oldVault, vault3Id);
+            assert.deepEqual(request.oldVault.account_id, vault3Id);
         });
     });
 

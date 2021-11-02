@@ -1,7 +1,7 @@
 import { MonetaryAmount } from "@interlay/monetary-js";
 import { AccountId } from "@polkadot/types/interfaces";
 import { CollateralUnit, WrappedCurrency } from ".";
-import { ReplaceRequestStatus } from "../interfaces";
+import { ReplaceRequestStatus, VaultId } from "../interfaces";
 import { BitcoinUnit, Currency } from "@interlay/monetary-js";
 
 export interface Issue {
@@ -15,6 +15,7 @@ export interface Issue {
     creationTimestamp?: number;
     vaultBTCAddress: string;
     vaultParachainAddress: string;
+    collateralCurrency: Currency<CollateralUnit>;
     btcTxId?: string;
     confirmations?: number;
     btcBlockHeight?: number;
@@ -71,7 +72,7 @@ export enum RedeemStatus {
 }
 
 export interface RefundRequestExt {
-    vaultId: AccountId;
+    vaultId: VaultId;
     amountIssuing: MonetaryAmount<WrappedCurrency, BitcoinUnit>;
     fee: MonetaryAmount<WrappedCurrency, BitcoinUnit>;
     amountBtc: MonetaryAmount<WrappedCurrency, BitcoinUnit>;
@@ -83,8 +84,8 @@ export interface RefundRequestExt {
 
 export interface ReplaceRequestExt {
     btcAddress: string;
-    newVault: AccountId;
-    oldVault: AccountId;
+    newVault: VaultId;
+    oldVault: VaultId;
     amount: MonetaryAmount<WrappedCurrency, BitcoinUnit>;
     griefingCollateral: MonetaryAmount<Currency<CollateralUnit>, CollateralUnit>;
     collateral: MonetaryAmount<Currency<CollateralUnit>, CollateralUnit>;
